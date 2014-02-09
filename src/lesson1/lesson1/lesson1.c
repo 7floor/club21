@@ -23,11 +23,11 @@ volatile unsigned char flag;
 // int0 handler
 ISR(INT0_vect)
 {
+	_delay_ms(50);
+	if (PIND & (1 << PIND2)) return; // we want the button still low after debounce delay
+
 	// flip flag
 	flag ^= 1;
-	
-	// wait long enough for button contacts stabilize (de-bounce)
-	_delay_ms(20);
 }
 
 int main(void)
