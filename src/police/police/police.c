@@ -32,16 +32,11 @@ ISR (TIMER0_OVF_vect)
 	
 	OCR0A = val;
 	OCR0B = (val < 128 ? val : (255 - val)) << 1;
-	
-	uint16_t snd = 400 + val;
+}
 
-	OCR1A = snd;
-	if (TCNT1 >= snd - 8) TCNT1 = 0;
-
-	//TCCR1B ^= T1DIV;
-	//OCR1A = snd;
-	//if (TCNT1 >= snd) TCNT1 = 0;
-	//TCCR1B ^= T1DIV;
+ISR (TIMER1_COMPA_vect)
+{
+	OCR1A = 400 + OCR0A;
 }
 
 void setup()
@@ -63,7 +58,7 @@ void setup()
 	TCCR1A = (0 << COM1A1) | (1 << COM1A0) | (0 << WGM11) | (0 << WGM10);
 	TCCR1B = (0 << WGM13) | (1 << WGM12) | T1DIV; 
 	
-	TIMSK = (1 << TOIE0);
+	TIMSK = (1 << TOIE0) | (1 << OCIE1A);
 
 	sei();
 }
