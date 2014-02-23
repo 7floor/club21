@@ -48,7 +48,7 @@ void setup()
 	// fast PWM
 	// OC0A & OC0B enabled
 	// IOclk/8 = 1/8 of 1MHz; 125000Hz; PWM = 125000/256 = ~488Hz; LED period will be 488/256 = ~1.9Hz
-	TCCR0A = (1 << COM0A1) | (0 << COM0A0) | (1 << COM0B1) | (0 << COM0B0) | (1 << WGM00) | (1 << WGM01);
+	TCCR0A = (1 << COM0A1) | (0 << COM0A0) | (1 << COM0B1) | (0 << COM0B0) | (1 << WGM01) | (1 << WGM00);
 	TCCR0B = (0 << WGM02) | T0DIV; 
 	
 	// timer 1
