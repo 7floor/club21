@@ -12,193 +12,193 @@
 #include <avr/interrupt.h>
 #include <util/atomic.h>
 
-#define BUTTON_TIMEOUT 50
-#define SLOW_BLINK_TIMEOUT 250
-#define FAST_BLINK_TIMEOUT 100
+// IO config
+#define IODDR DDRB
+#define IOPORT PORTB
+#define IOPIN PINB
+#define BUTTON_PIN PB0
+#define LED_ON_PRESS_PIN PB1
+#define LED_WHEN_PRESSED_PIN PB2
+#define LED_WHEN_MIDDLE_PIN PB4
+#define LED_WHEN_LONG_PIN PB5
 
-#define MIDDLE_PRESS_DURATION 40
-#define LONG_PRESS_DURATION 100
-#define MAX_DURATION LONG_PRESS_DURATION
+// timer 0 to give 1ms ticks
+#define TIMER_0_PRESCALER_64 ((0 << CS02) | (1 << CS01) | (1 << CS00))
+#define TCNT0_TICKS_PER_MS (F_CPU / 64 / 1000)
 
-#define LED_PORT (PORTD)
-#define LED_PIN (PD7)
+// button, numbers are milliseconds
+#define BUTTON_SCAN_PERIOD 50
+#define BUTTON_DURATION_LONG (2000 / BUTTON_SCAN_PERIOD)
+#define BUTTON_DURATION_LONGER (5000 / BUTTON_SCAN_PERIOD)
+#define BUTTON_AUTOREPEAT_LONG (250 / BUTTON_SCAN_PERIOD)
+#define BUTTON_AUTOREPEAT_LONGER (100 / BUTTON_SCAN_PERIOD)
 
-enum buttonStateType {
-	UNPRESSED,
-	PRESSED,
-	MIDDLE_PRESSED,
-	LONG_PRESSED
-	};
+#define ENABLE_BUTTON_PRESSED_LONGER 1
+#define ENABLE_BUTTON_AUTO_REPEAT 1
+
+#if ENABLE_BUTTON_PRESSED_LONGER
+	#define BUTTON_DURATION_MAX BUTTON_DURATION_LONGER
+#else
+	#define BUTTON_DURATION_MAX BUTTON_DURATION_LONG
+#endif
+
+#if ENABLE_BUTTON_AUTO_REPEAT
+	#if ENABLE_BUTTON_PRESSED_LONGER
+	#endif
+#endif
+
+enum buttonStateType 
+{
+	RELEASED
+	,PRESSED
+	,PRESSED_LONG
+#if ENABLE_BUTTON_PRESSED_LONGER
+	,PRESSED_LONGER
+#endif
+};
 	
-enum blinkStateType {
-	NONE,
-	SLOW,
-	FAST
-	};
-
-volatile uint16_t milliseconds;
-volatile uint16_t firstOccur;
-uint16_t pressTimer;
-volatile bool pressed;
-volatile uint8_t buttonTimeout = BUTTON_TIMEOUT;
-volatile uint8_t ledBlinkTimeout = 0;
-volatile uint8_t buttonPressDuration = 0;
-volatile buttonStateType buttonState = UNPRESSED;
-volatile blinkStateType blinkState = NONE;
-
-uint16_t millis();
-
-void buttonTimerHandler();
-
-void ledBlinkTimerHandler();
-
 bool isButtonPressed();
-
-void updateLedBlinkTimeout();
-
+void buttonTimerHandler();
 void onButtonStateChanged(buttonStateType buttonState);
-
-void onBlinkStateChanged(blinkStateType blinkState);
 
 ISR(TIMER0_OVF_vect)
 {
-	TCNT0 += 130;
-	milliseconds++;
-	buttonTimeout--;
-	if (buttonTimeout == 0)
-	{
-		buttonTimeout = BUTTON_TIMEOUT;
-		buttonTimerHandler();
-	}
-	if (blinkState != NONE)
-	{
-		ledBlinkTimeout--;
-		if (ledBlinkTimeout == 0)
-		{
-			ledBlinkTimerHandler();
-			updateLedBlinkTimeout();
-		}
-	}
+	TCNT0 -= TCNT0_TICKS_PER_MS;
+
+	buttonTimerHandler();
 }
 
-void ledBlinkTimerHandler()
+bool isButtonPressed()
 {
-	LED_PORT ^= (1 << LED_PIN);
-}
-
-void onBlinkStateChanged(blinkStateType blinkState)
-{
-	updateLedBlinkTimeout();
-}
-
-void updateLedBlinkTimeout()
-{
-	switch (blinkState)
-	{
-		case SLOW:
-		ledBlinkTimeout = SLOW_BLINK_TIMEOUT;
-		break;
-		case FAST:
-		ledBlinkTimeout = FAST_BLINK_TIMEOUT;
-		break;
-		case NONE:
-		ledBlinkTimeout = 0;
-		break;
-	}
+	return !(IOPIN & (1 << BUTTON_PIN));
 }
 
 void buttonTimerHandler()
 {
-	bool newState = isButtonPressed();
-	buttonStateType oldButtonState = buttonState;
+	static uint8_t buttonTimeout = BUTTON_SCAN_PERIOD;
+
+	if (--buttonTimeout) return;
+
+	buttonTimeout = BUTTON_SCAN_PERIOD;
 	
-	if (!pressed && newState)
-	{
-		buttonState = PRESSED;
-		buttonPressDuration = 0;
-	}
-	if (pressed && !newState)
-	{
-		buttonState = UNPRESSED;
-	}
-	pressed = newState;
+	static bool lastPressed = false;
+	static buttonStateType lastState = RELEASED;
+	static uint8_t pressedDuration;
+#if ENABLE_BUTTON_AUTO_REPEAT
+	static uint8_t autoRepeatDuration;
+#endif	
+	buttonStateType state = lastState;
+	bool pressed = isButtonPressed();
 	
-	if (buttonState != UNPRESSED && buttonPressDuration <= MAX_DURATION)
+	if (lastPressed != pressed)
 	{
-		buttonPressDuration++;
-		if (buttonPressDuration >= MIDDLE_PRESS_DURATION)
+		lastPressed = pressed;
+		pressedDuration = 0;
+#if ENABLE_BUTTON_AUTO_REPEAT
+		autoRepeatDuration = 0;
+#endif
+		if (pressed)
 		{
-			buttonState = MIDDLE_PRESSED;
+			state = PRESSED;
 		}
-		if (buttonPressDuration >= LONG_PRESS_DURATION)
+		else
 		{
-			buttonState = LONG_PRESSED;
+			state = RELEASED;
 		}
 	}
 	
-	if (oldButtonState != buttonState)
+	if (state != RELEASED)
 	{
-		onButtonStateChanged(buttonState);
+		if (pressedDuration < BUTTON_DURATION_MAX) pressedDuration++;
+		
+#if ENABLE_BUTTON_AUTO_REPEAT
+		
+		if (autoRepeatDuration)
+		{
+			autoRepeatDuration--;
+			if (!autoRepeatDuration)
+			{
+				lastState = RELEASED;
+			}
+		}
+		else
+		{
+			switch (state)
+			{
+				case PRESSED_LONG:
+				autoRepeatDuration = BUTTON_AUTOREPEAT_LONG;
+				break;
+#if ENABLE_BUTTON_PRESSED_LONGER				
+				case PRESSED_LONGER:
+				autoRepeatDuration = BUTTON_AUTOREPEAT_LONGER;
+				break;
+#endif				
+				default:
+				break;
+			}
+		}
+		
+#endif
+		
+		switch (pressedDuration)
+		{
+			case BUTTON_DURATION_LONG:
+			state = PRESSED_LONG;
+			break;
+#if ENABLE_BUTTON_PRESSED_LONGER
+			case BUTTON_DURATION_LONGER:
+			state = PRESSED_LONGER;
+			break;
+#endif
+		}
+		
+	}
+	
+	if (lastState != state)
+	{
+		lastState = state;
+		onButtonStateChanged(state);
 	}
 }
 
 void onButtonStateChanged(buttonStateType buttonState)
 {
-	blinkStateType oldState = blinkState;
-	
+	if (buttonState != RELEASED)	
+	{
+		IOPORT ^= (1 << LED_ON_PRESS_PIN); // toggle it
+	}
+			
 	switch (buttonState)
 	{
-		case UNPRESSED:
-			blinkState = NONE;
-			break;
+		case RELEASED:
+		IOPORT |= (1 << LED_WHEN_PRESSED_PIN) |(1 << LED_WHEN_MIDDLE_PIN) | (1 << LED_WHEN_LONG_PIN);  
+		break;
+
 		case PRESSED:
-			LED_PORT ^= (1 << LED_PIN);
-			break;
-		case MIDDLE_PRESSED:
-			blinkState = SLOW;
-			break;
-		case LONG_PRESSED:
-			blinkState = FAST;
-			break;
-	}
-	
-	if (oldState != blinkState)
-	{
-		onBlinkStateChanged(blinkState);
-	}
-}
+		IOPORT &= ~(1 << LED_WHEN_PRESSED_PIN);
+		break;
 
-uint16_t millis()
-{
-	uint16_t value;
-	ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
-	{
-		value = milliseconds;
+		case PRESSED_LONG:
+		IOPORT &= ~(1 << LED_WHEN_MIDDLE_PIN);
+		break;
+#if ENABLE_BUTTON_PRESSED_LONGER
+		case PRESSED_LONGER:
+		IOPORT &= ~(1 << LED_WHEN_LONG_PIN);
+		break;
+#endif
 	}
-	return value;
-}
-
-bool isButtonPressed()
-{	
-	return !(PIND & (1 << PIND2));
 }
 
 int main(void)
 {
-	TCCR0 = (0 << CS02) | (1 << CS01) | (1 << CS00);
-	TIMSK = (1 << TOIE0);
-	
-	DDRB = 1 << DDB0;
-	
-	DDRD = (0 << DDD2) | (1 << DDD7);
-	PORTD = (1 << PIND2);
-	
-	GICR = 0 << INT0;
-	//MCUCR = (0 << ISC01) | (1 << ISC00);
+	// IO Port config
+	IODDR = (1 << LED_ON_PRESS_PIN) | (1 << LED_WHEN_PRESSED_PIN) | (1 << LED_WHEN_MIDDLE_PIN) | (1 << LED_WHEN_LONG_PIN); // LEDs to output
+	IOPORT = (1 << BUTTON_PIN) | (1 << LED_ON_PRESS_PIN)  | (1 << LED_WHEN_PRESSED_PIN) | (1 << LED_WHEN_MIDDLE_PIN) | (1 << LED_WHEN_LONG_PIN); // Button with pull-up, and turn leds off
+	// TIMER 0
+	TCCR0B = TIMER_0_PRESCALER_64;
+	TIMSK = (1 << TOIE0); // int on overflow
 	
 	sei();
-	
-	pressTimer = millis();
 	
 	while (1)
 	{
