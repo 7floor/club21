@@ -11,6 +11,7 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <util/atomic.h>
+#include "uartdebug/uartdebug.h"
 
 // IO config
 #define IODDR DDRB
@@ -22,8 +23,8 @@
 #define LED_WHEN_MIDDLE_PIN PB4
 #define LED_WHEN_LONG_PIN PB5
 
-// timer 0 to give 1ms ticks
-#define TIMER_0_PRESCALER_64 ((0 << CS02) | (1 << CS01) | (1 << CS00))
+// timer 0 to give 1ms ticks, prescaler = 64 @ 8MHz
+#define TIMER_0_PRESCALER ((0 << CS02) | (1 << CS01) | (1 << CS00))
 #define TCNT0_TICKS_PER_MS (F_CPU / 64 / 1000)
 
 // button, numbers are milliseconds
@@ -35,17 +36,6 @@
 
 #define ENABLE_BUTTON_PRESSED_LONGER 1
 #define ENABLE_BUTTON_AUTO_REPEAT 1
-
-#if ENABLE_BUTTON_PRESSED_LONGER
-	#define BUTTON_DURATION_MAX BUTTON_DURATION_LONGER
-#else
-	#define BUTTON_DURATION_MAX BUTTON_DURATION_LONG
-#endif
-
-#if ENABLE_BUTTON_AUTO_REPEAT
-	#if ENABLE_BUTTON_PRESSED_LONGER
-	#endif
-#endif
 
 enum buttonStateType 
 {
@@ -86,7 +76,8 @@ void buttonTimerHandler()
 	static uint8_t pressedDuration;
 #if ENABLE_BUTTON_AUTO_REPEAT
 	static uint8_t autoRepeatDuration;
-#endif	
+#endif	//ENABLE_BUTTON_AUTO_REPEAT
+
 	buttonStateType state = lastState;
 	bool pressed = isButtonPressed();
 	
@@ -96,7 +87,7 @@ void buttonTimerHandler()
 		pressedDuration = 0;
 #if ENABLE_BUTTON_AUTO_REPEAT
 		autoRepeatDuration = 0;
-#endif
+#endif	//ENABLE_BUTTON_AUTO_REPEAT
 		if (pressed)
 		{
 			state = PRESSED;
@@ -106,11 +97,10 @@ void buttonTimerHandler()
 			state = RELEASED;
 		}
 	}
-	
-	if (state != RELEASED)
+	else if (state != RELEASED)
 	{
-		if (pressedDuration < BUTTON_DURATION_MAX) pressedDuration++;
-		
+		if (pressedDuration < 0xff) pressedDuration++;
+
 #if ENABLE_BUTTON_AUTO_REPEAT
 		
 		if (autoRepeatDuration)
@@ -126,19 +116,19 @@ void buttonTimerHandler()
 			switch (state)
 			{
 				case PRESSED_LONG:
-				autoRepeatDuration = BUTTON_AUTOREPEAT_LONG;
+				autoRepeatDuration = BUTTON_AUTOREPEAT_LONG - 1;
 				break;
 #if ENABLE_BUTTON_PRESSED_LONGER				
 				case PRESSED_LONGER:
-				autoRepeatDuration = BUTTON_AUTOREPEAT_LONGER;
+				autoRepeatDuration = BUTTON_AUTOREPEAT_LONGER - 1;
 				break;
-#endif				
+#endif	//ENABLE_BUTTON_PRESSED_LONGER			
 				default:
 				break;
 			}
 		}
 		
-#endif
+#endif	//ENABLE_BUTTON_AUTO_REPEAT
 		
 		switch (pressedDuration)
 		{
@@ -149,15 +139,23 @@ void buttonTimerHandler()
 			case BUTTON_DURATION_LONGER:
 			state = PRESSED_LONGER;
 			break;
-#endif
+#endif	//ENABLE_BUTTON_PRESSED_LONGER
 		}
-		
 	}
 	
 	if (lastState != state)
 	{
 		lastState = state;
 		onButtonStateChanged(state);
+		#ifdef DEBUG
+		NONATOMIC_BLOCK(NONATOMIC_RESTORESTATE)
+		{
+			debug_out_int(pressedDuration);
+			debug_out_str_P(", state: ");
+			debug_out_int(state);
+			debug_newline();
+		}
+		#endif
 	}
 }
 
@@ -185,17 +183,19 @@ void onButtonStateChanged(buttonStateType buttonState)
 		case PRESSED_LONGER:
 		IOPORT &= ~(1 << LED_WHEN_LONG_PIN);
 		break;
-#endif
+#endif	//ENABLE_BUTTON_PRESSED_LONGER
 	}
 }
 
 int main(void)
 {
+	uartdebug_init();
+	
 	// IO Port config
 	IODDR = (1 << LED_ON_PRESS_PIN) | (1 << LED_WHEN_PRESSED_PIN) | (1 << LED_WHEN_MIDDLE_PIN) | (1 << LED_WHEN_LONG_PIN); // LEDs to output
 	IOPORT = (1 << BUTTON_PIN) | (1 << LED_ON_PRESS_PIN)  | (1 << LED_WHEN_PRESSED_PIN) | (1 << LED_WHEN_MIDDLE_PIN) | (1 << LED_WHEN_LONG_PIN); // Button with pull-up, and turn leds off
 	// TIMER 0
-	TCCR0B = TIMER_0_PRESCALER_64;
+	TCCR0B = TIMER_0_PRESCALER;
 	TIMSK = (1 << TOIE0); // int on overflow
 	
 	sei();
