@@ -28,28 +28,81 @@
 #define TCNT0_TICKS_PER_MS (F_CPU / 64 / 1000)
 
 // button, numbers are milliseconds
-#define BUTTON_SCAN_PERIOD 50
-#define BUTTON_DURATION_LONG (2000 / BUTTON_SCAN_PERIOD)
-#define BUTTON_DURATION_LONGER (5000 / BUTTON_SCAN_PERIOD)
-#define BUTTON_AUTOREPEAT_LONG (250 / BUTTON_SCAN_PERIOD)
-#define BUTTON_AUTOREPEAT_LONGER (100 / BUTTON_SCAN_PERIOD)
+#define BUTTON_SCAN_PERIOD 25
 
-#define ENABLE_BUTTON_PRESSED_LONGER 1
-#define ENABLE_BUTTON_AUTO_REPEAT 1
+#define BUTTON_DURATION1 2000
+#define BUTTON_AUTOREPEAT1 250
 
-enum buttonStateType 
+#define BUTTON_DURATION2 5000
+#define BUTTON_AUTOREPEAT2 100
+
+// library-like defaults and redefines
+#ifndef BUTTON_SCAN_PERIOD
+	#define BUTTON_SCAN_PERIOD 50
+#endif
+
+#ifndef BUTTON_DURATION1
+	#define BUTTON_DURATION1 2000
+#endif
+
+#define BUTTON_DURATION1_SCANS ((BUTTON_DURATION1) / (BUTTON_SCAN_PERIOD))
+#if BUTTON_DURATION1_SCANS > 255
+	#error BUTTON_DURATION1 too large or BUTTON_SCAN_PERIOD too small
+#endif
+#ifdef BUTTON_AUTOREPEAT1
+	#define ENABLE_BUTTON_AUTOREPEAT
+	#define BUTTON_AUTOREPEAT1_SCANS ((BUTTON_AUTOREPEAT1) / (BUTTON_SCAN_PERIOD))
+	#if BUTTON_AUTOREPEAT1_SCANS > 255
+		#error BUTTON_AUTOREPEAT1 too large or BUTTON_SCAN_PERIOD too small
+	#endif
+#else
+	#undef ENABLE_BUTTON_AUTOREPEAT
+#endif
+
+#ifdef BUTTON_DURATION2
+	#if BUTTON_DURATION2 < BUTTON_DURATION1 + BUTTON_SCAN_PERIOD
+		#error BUTTON_DURATION2, if defined, should be greater than BUTTON_DURATION1 + BUTTON_SCAN_PERIOD
+	#endif
+	#define ENABLE_BUTTON_DURATION2
+	#define BUTTON_DURATION2_SCANS ((BUTTON_DURATION2) / (BUTTON_SCAN_PERIOD))
+	#if BUTTON_DURATION2_SCANS > 255
+		#error BUTTON_DURATION2 too large or BUTTON_SCAN_PERIOD too small
+	#endif
+	#ifdef ENABLE_BUTTON_AUTOREPEAT
+		#ifdef BUTTON_AUTOREPEAT2
+			#define BUTTON_AUTOREPEAT2_SCANS ((BUTTON_AUTOREPEAT2) / (BUTTON_SCAN_PERIOD))
+			#if BUTTON_AUTOREPEAT2_SCANS > 255
+				#error BUTTON_AUTOREPEAT2 too large or BUTTON_SCAN_PERIOD too small
+			#endif
+		#else
+			#define BUTTON_AUTOREPEAT2_SCANS BUTTON_AUTOREPEAT1_SCANS
+		#endif
+	#endif
+#else
+	#undef ENABLE_BUTTON_DURATION2
+#endif
+
+// declarations
+
+enum button_state_t 
 {
 	RELEASED
 	,PRESSED
 	,PRESSED_LONG
-#if ENABLE_BUTTON_PRESSED_LONGER
+#ifdef ENABLE_BUTTON_DURATION2
 	,PRESSED_LONGER
 #endif
 };
 	
 bool isButtonPressed();
 void buttonTimerHandler();
-void onButtonStateChanged(buttonStateType buttonState);
+#ifdef ENABLE_BUTTON_AUTOREPEAT
+void onButtonStateChanged(button_state_t buttonState, bool repeated);
+#else
+void onButtonStateChanged(button_state_t buttonState);
+#endif
+
+// implementations
 
 ISR(TIMER0_OVF_vect)
 {
@@ -72,22 +125,23 @@ void buttonTimerHandler()
 	buttonTimeout = BUTTON_SCAN_PERIOD;
 	
 	static bool lastPressed = false;
-	static buttonStateType lastState = RELEASED;
+	static button_state_t lastState = RELEASED;
 	static uint8_t pressedDuration;
-#if ENABLE_BUTTON_AUTO_REPEAT
+#ifdef ENABLE_BUTTON_AUTOREPEAT
 	static uint8_t autoRepeatDuration;
-#endif	//ENABLE_BUTTON_AUTO_REPEAT
+	bool repeated = false;
+#endif
 
-	buttonStateType state = lastState;
+	button_state_t state = lastState;
 	bool pressed = isButtonPressed();
 	
 	if (lastPressed != pressed)
 	{
 		lastPressed = pressed;
 		pressedDuration = 0;
-#if ENABLE_BUTTON_AUTO_REPEAT
+#ifdef ENABLE_BUTTON_AUTOREPEAT
 		autoRepeatDuration = 0;
-#endif	//ENABLE_BUTTON_AUTO_REPEAT
+#endif
 		if (pressed)
 		{
 			state = PRESSED;
@@ -101,14 +155,14 @@ void buttonTimerHandler()
 	{
 		if (pressedDuration < 0xff) pressedDuration++;
 
-#if ENABLE_BUTTON_AUTO_REPEAT
+#ifdef ENABLE_BUTTON_AUTOREPEAT
 		
 		if (autoRepeatDuration)
 		{
 			autoRepeatDuration--;
 			if (!autoRepeatDuration)
 			{
-				lastState = RELEASED;
+				repeated = true;
 			}
 		}
 		else
@@ -116,56 +170,80 @@ void buttonTimerHandler()
 			switch (state)
 			{
 				case PRESSED_LONG:
-				autoRepeatDuration = BUTTON_AUTOREPEAT_LONG - 1;
+				autoRepeatDuration = BUTTON_AUTOREPEAT1_SCANS - 1;
 				break;
-#if ENABLE_BUTTON_PRESSED_LONGER				
+#ifdef ENABLE_BUTTON_DURATION2				
 				case PRESSED_LONGER:
-				autoRepeatDuration = BUTTON_AUTOREPEAT_LONGER - 1;
+				autoRepeatDuration = BUTTON_AUTOREPEAT2_SCANS - 1;
 				break;
-#endif	//ENABLE_BUTTON_PRESSED_LONGER			
+#endif			
 				default:
 				break;
 			}
 		}
 		
-#endif	//ENABLE_BUTTON_AUTO_REPEAT
+#endif
 		
 		switch (pressedDuration)
 		{
-			case BUTTON_DURATION_LONG:
+			case BUTTON_DURATION1_SCANS:
 			state = PRESSED_LONG;
+#ifdef ENABLE_BUTTON_AUTOREPEAT
+			repeated = false;
+#endif
 			break;
-#if ENABLE_BUTTON_PRESSED_LONGER
-			case BUTTON_DURATION_LONGER:
+#ifdef ENABLE_BUTTON_DURATION2
+			case BUTTON_DURATION2_SCANS:
 			state = PRESSED_LONGER;
+#ifdef ENABLE_BUTTON_AUTOREPEAT
+			repeated = false;
+#endif
 			break;
-#endif	//ENABLE_BUTTON_PRESSED_LONGER
+#endif
 		}
 	}
 	
-	if (lastState != state)
+	if (lastState != state
+#ifdef ENABLE_BUTTON_AUTOREPEAT
+		|| repeated
+#endif
+	   )
 	{
 		lastState = state;
+#ifdef ENABLE_BUTTON_AUTOREPEAT
+		onButtonStateChanged(state, repeated);
+#else
 		onButtonStateChanged(state);
+#endif
 		#ifdef DEBUG
 		NONATOMIC_BLOCK(NONATOMIC_RESTORESTATE)
 		{
 			debug_out_int(pressedDuration);
 			debug_out_str_P(", state: ");
 			debug_out_int(state);
+#ifdef ENABLE_BUTTON_AUTOREPEAT
+			if (repeated) debug_out_str_P(", repeated");
+#endif
 			debug_newline();
 		}
 		#endif
 	}
 }
 
-void onButtonStateChanged(buttonStateType buttonState)
+#ifdef ENABLE_BUTTON_AUTOREPEAT
+void onButtonStateChanged(button_state_t buttonState, bool repeated)
+#else
+void onButtonStateChanged(button_state_t buttonState)
+#endif
 {
 	if (buttonState != RELEASED)	
 	{
 		IOPORT ^= (1 << LED_ON_PRESS_PIN); // toggle it
 	}
-			
+	
+#ifdef ENABLE_BUTTON_AUTOREPEAT
+	if (repeated) return;
+#endif			
 	switch (buttonState)
 	{
 		case RELEASED:
@@ -179,11 +257,11 @@ void onButtonStateChanged(buttonStateType buttonState)
 		case PRESSED_LONG:
 		IOPORT &= ~(1 << LED_WHEN_MIDDLE_PIN);
 		break;
-#if ENABLE_BUTTON_PRESSED_LONGER
+#ifdef ENABLE_BUTTON_DURATION2
 		case PRESSED_LONGER:
 		IOPORT &= ~(1 << LED_WHEN_LONG_PIN);
 		break;
-#endif	//ENABLE_BUTTON_PRESSED_LONGER
+#endif
 	}
 }
 
